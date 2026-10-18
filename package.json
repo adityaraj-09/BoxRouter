@@ -1,0 +1,40 @@
+{
+  "name": "boxrouter",
+  "version": "0.2.0",
+  "description": "In-process sandbox router with a Blaxel-compatible API",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "src/pricing.json", "README.md"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && cp src/pricing.json dist/pricing.json",
+    "test": "tsx --test test/*.test.ts"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "ws": "^8.18.3"
+  },
+  "peerDependencies": {
+    "e2b": "^2.0.0"
+  },
+  "peerDependenciesMeta": {
+    "e2b": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.20.0",
+    "typescript": "^5.8.0"
+  },
+  "license": "Apache-2.0"
+}

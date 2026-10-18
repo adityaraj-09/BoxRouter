@@ -1,5 +1,8 @@
 __pycache__/
 *.pyc
 .venv/
+node_modules/
+dist/
 usage.json
 .pytest_cache/
+*.tmp
