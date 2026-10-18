@@ -1,70 +1,68 @@
 # BoxRouter
 
-One Python interface for sandboxes on E2B, Modal, Daytona, RunPod, and the other backends supported by [bespokelabs-sandbox](https://github.com/bespokelabsai/sandbox). You keep the provider keys. Each `create()` walks those keys in round-robin order and skips a key that is over its limit.
+TypeScript library that replaces a Blaxel sandbox with a round-robin across the provider keys you already have. Import it in the same process. There is no BoxRouter server and no Bespoke package.
 
-There is no HTTP API and no user signup. Call `Router` from your own code.
+```ts
+import { createRouter, SandboxInstance } from "boxrouter";
 
-## Install
+const router = await createRouter("boxrouter.json");
 
-```bash
-pip install -e .
-# plus the provider you actually call, for example:
-pip install -e '.[e2b]'
+const sandbox = await SandboxInstance.createIfNotExists(
+  { name: "steer-room-agent", image: "python:3.12-slim" },
+  router,
+);
+
+await sandbox.process.exec({
+  name: "claude",
+  command: "claude -p 'summarize the repo'",
+  workingDir: "/home/user/repo",
+  waitForCompletion: false,
+});
+sandbox.process.streamLogs("claude", {
+  onStdout: (line) => console.log(line),
+  onStderr: (line) => console.error(line),
+});
+const result = await sandbox.process.wait("claude");
+
+const terminal = sandbox.getTerminalTarget();
+// terminal.url is ws://127.0.0.1:<port>/terminal/ws?...
+// terminal.headers.Authorization is the bearer token for that socket
 ```
 
-## Configure keys
+Calling `createIfNotExists` again with the same `name` resumes the provider sandbox (`Sandbox.connect` on E2B, `docker inspect` on Docker, `Daytona.get` on Daytona) using the id stored in `usage.json`. That is the stand-in for Blaxel's `SandboxInstance.get(name)`.
 
-Copy `examples/config.example.json` and fill in your keys. Limits are optional.
+## Providers
 
-| Limit | Effect |
-| --- | --- |
-| `concurrent_sandboxes` | Skip the key while this many sandboxes from it are still open |
-| `creates_per_day` | Block the key until the next UTC day |
-| `creates_per_month` | Block the key until the next UTC month |
-| `monthly_spend_usd` | Modal only. Compared with `Workspace.billing.summary()` |
+| Provider | Streaming command | Browser terminal |
+| --- | --- | --- |
+| `docker` | `docker exec` line stream | PTY via `docker exec -it`, proxied on the websocket above |
+| `e2b` | `commands.run({ onStdout, onStderr })` | E2B PTY proxied on the same websocket. `npm install e2b` |
+| `daytona` | SDK `executeCommand`, lines delivered when the command returns | No provider PTY. The websocket closes with an explanation. `npm install @daytonaio/sdk` |
 
-Usage, the round-robin cursor, and open sandbox ids are written to `usage.json` next to the config file. Secrets stay in the config file and are not copied into the usage file.
+Modal is not included. It has no TypeScript sandbox SDK to vendor.
 
-## Create a sandbox
+## Config
 
-```python
-from boxrouter import Router
+`examples/config.example.json`:
 
-router = Router.from_file("config.json")
-
-with router.create(timeout_secs=600) as sandbox:
-    print(sandbox.provider, sandbox.key_id)
-    result = sandbox.execute_code('print("hello")')
-    print(result.stdout)
-    sandbox.write_file("/tmp/note.txt", "hello")
-
-# Force one provider. Keys for that provider still rotate.
-with router.create(backend="e2b", template="base") as sandbox:
-    sandbox.execute_command("uname", ["-a"])
-
-print(router.status())
+```json
+{
+  "organization": { "name": "default", "markup": 1 },
+  "keys": [
+    {
+      "id": "e2b-a",
+      "provider": "e2b",
+      "credentials": { "E2B_API_KEY": "e2b_..." },
+      "limits": { "concurrent_sandboxes": 20, "creates_per_day": 200, "spend_usd_per_month": 30 }
+    }
+  ]
+}
 ```
 
-`sandbox` forwards to a bespokelabs `Sandbox`, so code execution, commands, files, presets, workspaces, agents, and snapshots work the same way as that SDK. The provider's own extra must be installed (`e2b`, `modal`, `daytona`, ...).
+`router.pricing("e2b")`, `router.estimate(...)`, `router.organization()`, and `router.costs()` are local function calls. Rates live in `src/pricing.json`. Destroying a sandbox writes the estimate into `usage.json`. A key over `spend_usd_per_month` is skipped until the next UTC month.
 
-`router.create(backend="e2b")` still round-robins the E2B keys you configured. Omit `backend` to rotate across every provider.
+## Swap inside Steer
 
-## How a key is skipped
+Replace `@blaxel/core`'s `SandboxInstance` with this class. Keep `cliSandbox.ts` (clone, Claude/Codex, commit, push, pull request). Point `execInSandbox`, `streamLogs`, `wait`, `kill`, and `getTerminalTarget` at the methods above. Pass the same sandbox `name` you used to store `sdk_agent_id`.
 
-On each create, starting at the next key in the ring:
-
-1. Local counts in `usage.json` (open sandboxes, creates today, creates this month).
-2. A live provider check:
-   - **E2B** — `GET https://api.e2b.app/v2/sandboxes` and the `X-Total-Running` header.
-   - **Daytona** — `GET /organizations/{id}/usage` (organization id from config, or the first org returned by the API).
-   - **Modal** — billing summary when `monthly_spend_usd` is set and the Modal SDK is installed.
-   - **RunPod** — `GET https://rest.runpod.io/v1/pods`.
-3. If the provider create then fails with a quota or auth error, that key is marked and the next key is tried.
-
-A full concurrency or CPU quota skips the key for that attempt only, so a later destroy can make it eligible again. A daily or monthly counter, HTTP 429, or Modal spend cap is stored as `blocked_until`. An auth failure marks the key `invalid` until you change the config and delete that flag from `usage.json`.
-
-Destroying a sandbox (or leaving a `with` block) removes its concurrency slot. If a process dies first, call `router.forget(sandbox_id)` to drop the slot without calling the provider. There is no background cleanup.
-
-## What this version leaves out
-
-No accounts, no per-caller quotas, no HTTP server, and no sweeper that kills sandboxes when a process exits. Provider limits that are not in the config, and not returned by the probes above, are enforced only when the provider itself rejects the create.
+The websocket path is `/terminal/ws`, with `name`, `cols`, and `rows` query parameters, which matches the shape Steer already builds from `sandbox.process.url`.
