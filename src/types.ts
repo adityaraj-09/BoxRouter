@@ -53,7 +53,10 @@ export interface ProviderSession {
   };
   listDir(path: string): Promise<{ directories: DirEntry[]; files: DirEntry[] }>;
   /** Attach a browser terminal. Reject when this provider has no PTY. */
-  attachTerminal(socket: TerminalSocket, size: { cols: number; rows: number }): Promise<void>;
+  attachTerminal(
+    socket: TerminalSocket,
+    size: { cols: number; rows: number; cwd?: string; shell?: string },
+  ): Promise<void>;
   destroy(): Promise<void>;
 }
 
@@ -79,4 +82,8 @@ export interface CreateRequest {
   memoryMb?: number;
   env?: Record<string, string>;
   cpu?: number;
+  labels?: Record<string, string>;
+  /** Blaxel createIfNotExists fields. Stored, not sent to the provider. */
+  externalId?: string;
+  region?: string;
 }

@@ -3,7 +3,7 @@
 TypeScript library that replaces a Blaxel sandbox with a round-robin across the provider keys you already have. Import it in the same process. There is no BoxRouter server and no Bespoke package.
 
 ```ts
-import { createRouter, SandboxInstance } from "boxrouter";
+import { createRouter, SandboxInstance, settings } from "boxrouter";
 
 const router = await createRouter("boxrouter.json");
 
@@ -25,11 +25,17 @@ sandbox.process.streamLogs("claude", {
 const result = await sandbox.process.wait("claude");
 
 const terminal = sandbox.getTerminalTarget();
-// terminal.url is ws://127.0.0.1:<port>/terminal/ws?...
-// terminal.headers.Authorization is the bearer token for that socket
+// terminal.headers matches settings.headers (Authorization: Bearer …).
+// terminal.url is ws://127.0.0.1:<port>/s/<name>/terminal/ws?...
 ```
 
-Calling `createIfNotExists` again with the same `name` resumes the provider sandbox (`Sandbox.connect` on E2B, `docker inspect` on Docker, `Daytona.get` on Daytona) using the id stored in `usage.json`. That is the stand-in for Blaxel's `SandboxInstance.get(name)`.
+`createRouter` installs that router as the default, so Steer's calls stay `SandboxInstance.createIfNotExists({ name, image, memory, ttl, lifecycle, region, envs, labels, externalId })`, `SandboxInstance.get(name)`, and `SandboxInstance.delete(name)`.
+
+`get(name)` only resumes. The provider id is `provider_resource_id` in `usage.json` under the Steer sandbox name (`Sandbox.connect` on E2B, `docker inspect` on Docker, `Daytona.get` on Daytona). A missing name throws, which is what Steer's panel path already catches.
+
+`sandbox.exec(command, { onStdout, onStderr, signal })` runs until the process exits and forwards each complete line. `process.exec` / `streamLogs` / `wait` / `kill` stay in the Blaxel shape Steer already calls, including `waitForCompletion: false`.
+
+`sandbox.process.url` is `http://127.0.0.1:<port>/s/<name>`. Steer rewrites that to `ws` and appends `/terminal/ws`. `settings.headers` is the bearer token for that socket. `getTerminalTarget()` returns the same `{ url, headers }`.
 
 ## Providers
 
@@ -63,6 +69,6 @@ Modal is not included. It has no TypeScript sandbox SDK to vendor.
 
 ## Swap inside Steer
 
-Replace `@blaxel/core`'s `SandboxInstance` with this class. Keep `cliSandbox.ts` (clone, Claude/Codex, commit, push, pull request). Point `execInSandbox`, `streamLogs`, `wait`, `kill`, and `getTerminalTarget` at the methods above. Pass the same sandbox `name` you used to store `sdk_agent_id`.
+Replace the `@blaxel/core` import with `boxrouter` and call `createRouter` once at startup. Keep `cliSandbox.ts` (clone, Claude/Codex, commit, push, pull request). `execInSandbox` already uses `process.exec`, `streamLogs`, `wait`, and `kill`. The panel builds the terminal URL from `process.url` plus `/terminal/ws` and copies `settings.headers`. Pass the same sandbox `name` you stored as `sdk_agent_id`.
 
-The websocket path is `/terminal/ws`, with `name`, `cols`, and `rows` query parameters, which matches the shape Steer already builds from `sandbox.process.url`.
+Docker and E2B attach a PTY on that websocket. Daytona has no PTY, so the socket closes with an explanation. Modal has no TypeScript sandbox client, so it is not a driver in this package.

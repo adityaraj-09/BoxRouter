@@ -5,11 +5,15 @@ export interface NamedSandbox {
   name: string;
   keyId: string;
   provider: string;
-  resourceId: string;
+  /** Provider sandbox id. Reconnect uses this; it is not a BoxRouter name. */
+  provider_resource_id: string;
   image?: string;
   cpu: number;
   memoryMb: number;
   createdAt: string;
+  labels?: Record<string, string>;
+  externalId?: string;
+  region?: string;
 }
 
 export interface SpendEntry {
