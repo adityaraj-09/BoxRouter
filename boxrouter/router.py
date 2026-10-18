@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterator
 
 from boxrouter.errors import ConfigError, NoEligibleKey
+from boxrouter.pricing import estimate_cost, get_backend_pricing, get_pricing
 from boxrouter.probes import ProbeResult, check_provider
 from boxrouter.session import RoutedSandbox
 from boxrouter.store import JsonStore
@@ -169,9 +170,83 @@ class Router:
                         "blocked_reason": usage.get("blocked_reason"),
                         "last_probe": usage.get("last_probe"),
                         "limits": key.get("limits") or {},
+                        "spend_usd_this_month": self._spend_this_month(usage, now),
                     }
                 )
             return rows
+
+    def organization(self) -> dict[str, Any]:
+        """The single local organization. This is not a hosted account."""
+        org = self._config.get("organization") or {}
+        totals = self.costs()
+        return {
+            "name": org.get("name") or "default",
+            "markup": self._markup(),
+            "provider_spend_usd": totals["provider_usd"],
+            "customer_spend_usd": totals["customer_usd"],
+        }
+
+    def pricing(self, provider: str | None = None) -> dict[str, Any]:
+        """Bundled rate card. No network call."""
+        if provider is None:
+            return get_pricing()
+        return get_backend_pricing(provider) or {}
+
+    def estimate(
+        self,
+        provider: str,
+        elapsed_secs: float,
+        *,
+        cpu: float = 1.0,
+        memory_mb: int = 1024,
+    ) -> dict[str, float]:
+        """Estimate compute cost for a measured interval."""
+        return estimate_cost(
+            provider,
+            elapsed_secs,
+            cpu=cpu,
+            memory_mb=memory_mb,
+            markup=self._markup(),
+        )
+
+    def costs(self) -> dict[str, Any]:
+        """Spend recorded when sandboxes are destroyed, from the usage file."""
+        now = self._now()
+        with self._store.transaction() as state:
+            by_key: list[dict[str, Any]] = []
+            provider_usd = 0.0
+            customer_usd = 0.0
+            month_provider = 0.0
+            for key in self._config["keys"]:
+                usage = self._usage(state, key["id"])
+                key_provider = 0.0
+                key_customer = 0.0
+                key_month = 0.0
+                for entry in usage.get("spend") or []:
+                    amount = float(entry.get("provider_usd") or 0)
+                    billed = float(entry.get("customer_usd") or amount)
+                    key_provider += amount
+                    key_customer += billed
+                    if _parse_time(entry["at"]) >= _start_of_month(now):
+                        key_month += amount
+                provider_usd += key_provider
+                customer_usd += key_customer
+                month_provider += key_month
+                by_key.append(
+                    {
+                        "id": key["id"],
+                        "provider": key["provider"],
+                        "provider_usd": key_provider,
+                        "customer_usd": key_customer,
+                        "provider_usd_this_month": key_month,
+                    }
+                )
+            return {
+                "provider_usd": provider_usd,
+                "customer_usd": customer_usd,
+                "provider_usd_this_month": month_provider,
+                "keys": by_key,
+            }
 
     def forget(self, sandbox_id: str) -> None:
         """Drop a sandbox from the usage file without calling the provider."""
@@ -190,7 +265,7 @@ class Router:
         """
         now = self._now()
         with self._store.transaction() as state:
-            chosen, sandbox_id = self._reserve(state, backend, now)
+            chosen, sandbox_id = self._reserve(state, backend, now, sandbox_kwargs)
         key = chosen
         try:
             with self.credentials(key):
@@ -214,208 +289,3 @@ class Router:
             if record is not None and resource_id is not None:
                 record["provider_resource_id"] = str(resource_id)
         return RoutedSandbox(sandbox_id, key, sandbox, self)
-
-    def _create_after_failure(
-        self,
-        backend: str | None,
-        sandbox_kwargs: dict[str, Any],
-        skip: set[str],
-    ) -> RoutedSandbox:
-        """Try the remaining keys once. The first non-quota error is raised."""
-        now = self._now()
-        while True:
-            with self._store.transaction() as state:
-                try:
-                    key, sandbox_id = self._reserve(state, backend, now, skip=skip)
-                except NoEligibleKey:
-                    raise
-            try:
-                with self.credentials(key):
-                    sandbox = self._factory(key["provider"], **sandbox_kwargs)
-            except Exception as exc:
-                self._rollback(sandbox_id)
-                skip.add(key["id"])
-                if _is_auth(exc):
-                    self._mark(key["id"], invalid=True, reason=str(exc)[:300])
-                    continue
-                if _is_quota(exc):
-                    self._mark(
-                        key["id"],
-                        blocked_until=_start_of_day(now) + timedelta(days=1),
-                        reason=str(exc)[:300],
-                    )
-                    continue
-                raise
-            resource_id = getattr(sandbox, "provider_resource_id", None)
-            with self._store.transaction() as state:
-                record = state["sandboxes"].get(sandbox_id)
-                if record is not None and resource_id is not None:
-                    record["provider_resource_id"] = str(resource_id)
-            return RoutedSandbox(sandbox_id, key, sandbox, self)
-
-    def _reserve(
-        self,
-        state: dict[str, Any],
-        backend: str | None,
-        now: datetime,
-        skip: set[str] | None = None,
-    ) -> tuple[dict[str, Any], str]:
-        keys: list[dict[str, Any]] = self._config["keys"]
-        skipped = skip or set()
-        cursor = int(state.get("cursor") or 0) % len(keys)
-        considered = 0
-        for offset in range(len(keys)):
-            index = (cursor + offset) % len(keys)
-            key = keys[index]
-            if backend and key["provider"] != backend:
-                continue
-            if key["id"] in skipped:
-                continue
-            considered += 1
-            reason = self._local_block(state, key, now)
-            if reason:
-                continue
-            probe = self._probe(key)
-            usage = self._usage(state, key["id"])
-            usage["last_probe"] = {
-                "at": now.isoformat(),
-                "exhausted": probe.exhausted,
-                "reason": probe.reason,
-                "detail": probe.detail,
-            }
-            if probe.auth_failed:
-                usage["invalid"] = True
-                usage["blocked_reason"] = probe.reason
-                continue
-            if probe.exhausted:
-                if probe.persist and probe.until is not None:
-                    usage["blocked_until"] = probe.until.isoformat()
-                    usage["blocked_reason"] = probe.reason
-                continue
-            state["cursor"] = (index + 1) % len(keys)
-            sandbox_id = uuid.uuid4().hex
-            usage["creates"].append(
-                {"at": now.isoformat(), "sandbox_id": sandbox_id}
-            )
-            usage["active"].append(sandbox_id)
-            state["sandboxes"][sandbox_id] = {
-                "key_id": key["id"],
-                "provider": key["provider"],
-                "created_at": now.isoformat(),
-                "provider_resource_id": None,
-            }
-            return key, sandbox_id
-        if considered == 0:
-            raise NoEligibleKey(
-                f"no keys configured for backend {backend!r}"
-                if backend
-                else "no keys configured"
-            )
-        raise NoEligibleKey("every provider key is exhausted or invalid")
-
-    def _local_block(
-        self, state: dict[str, Any], key: dict[str, Any], now: datetime
-    ) -> str | None:
-        usage = self._usage(state, key["id"])
-        if usage.get("invalid"):
-            return "invalid"
-        blocked = usage.get("blocked_until")
-        if blocked:
-            if _parse_time(blocked) > now:
-                return usage.get("blocked_reason") or "blocked"
-            usage["blocked_until"] = None
-            usage["blocked_reason"] = None
-        limits = key.get("limits") or {}
-        # Keep the file to the current month. Older creates no longer count.
-        usage["creates"] = [
-            item
-            for item in usage["creates"]
-            if _create_time(item) >= _start_of_month(now)
-        ]
-        creates = [_create_time(item) for item in usage["creates"]]
-        concurrent = limits.get("concurrent_sandboxes")
-        if concurrent is not None and len(usage["active"]) >= int(concurrent):
-            return "concurrent_sandboxes"
-        per_day = limits.get("creates_per_day")
-        if per_day is not None:
-            today = [item for item in creates if item >= _start_of_day(now)]
-            if len(today) >= int(per_day):
-                usage["blocked_until"] = (
-                    _start_of_day(now) + timedelta(days=1)
-                ).isoformat()
-                usage["blocked_reason"] = "creates_per_day"
-                return "creates_per_day"
-        per_month = limits.get("creates_per_month")
-        if per_month is not None and len(creates) >= int(per_month):
-            usage["blocked_until"] = _start_of_next_month(now).isoformat()
-            usage["blocked_reason"] = "creates_per_month"
-            return "creates_per_month"
-        return None
-
-    def _usage(self, state: dict[str, Any], key_id: str) -> dict[str, Any]:
-        keys = state.setdefault("keys", {})
-        usage = keys.setdefault(
-            key_id,
-            {
-                "creates": [],
-                "active": [],
-                "invalid": False,
-                "blocked_until": None,
-                "blocked_reason": None,
-                "last_probe": None,
-            },
-        )
-        return usage
-
-    def _drop(self, state: dict[str, Any], sandbox_id: str) -> None:
-        record = state.get("sandboxes", {}).pop(sandbox_id, None)
-        if record is None:
-            return
-        usage = state.get("keys", {}).get(record["key_id"])
-        if usage is None:
-            return
-        usage["active"] = [
-            item for item in usage.get("active", []) if item != sandbox_id
-        ]
-        usage["creates"] = [
-            item
-            for item in usage.get("creates", [])
-            if not (isinstance(item, dict) and item.get("sandbox_id") == sandbox_id)
-        ]
-
-    def _rollback(self, sandbox_id: str) -> None:
-        with self._store.transaction() as state:
-            self._drop(state, sandbox_id)
-
-    def _mark(
-        self,
-        key_id: str,
-        *,
-        invalid: bool = False,
-        blocked_until: datetime | None = None,
-        reason: str = "",
-    ) -> None:
-        with self._store.transaction() as state:
-            usage = self._usage(state, key_id)
-            if invalid:
-                usage["invalid"] = True
-            if blocked_until is not None:
-                usage["blocked_until"] = blocked_until.isoformat()
-            if reason:
-                usage["blocked_reason"] = reason
-
-
-def _default_factory(backend: str, **kwargs: Any) -> Any:
-    from bespokelabs.sandbox import Sandbox
-
-    return Sandbox(backend, **kwargs)
-
-
-def _is_quota(exc: BaseException) -> bool:
-    text = str(exc).lower()
-    return any(hint in text for hint in _QUOTA_HINTS)
-
-
-def _is_auth(exc: BaseException) -> bool:
-    text = str(exc).lower()
-    return any(hint in text for hint in _AUTH_HINTS)
