@@ -23,12 +23,22 @@
     "ws": "^8.18.3"
   },
   "peerDependencies": {
-    "e2b": "^2.0.0"
+    "@blaxel/core": "^0.2.0",
+    "@daytonaio/sdk": "^0.100.0",
+    "@namespacelabs/sdk": "^0.1.0",
+    "@tensorlakeai/tensorlake": "^0.1.0",
+    "@vercel/sandbox": "^1.0.0",
+    "e2b": "^2.0.0",
+    "modal": "^0.5.0"
   },
   "peerDependenciesMeta": {
-    "e2b": {
-      "optional": true
-    }
+    "@blaxel/core": { "optional": true },
+    "@daytonaio/sdk": { "optional": true },
+    "@namespacelabs/sdk": { "optional": true },
+    "@tensorlakeai/tensorlake": { "optional": true },
+    "@vercel/sandbox": { "optional": true },
+    "e2b": { "optional": true },
+    "modal": { "optional": true }
   },
   "devDependencies": {
     "@types/node": "^22.15.0",

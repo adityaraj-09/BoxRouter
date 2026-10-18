@@ -39,13 +39,20 @@ const terminal = sandbox.getTerminalTarget();
 
 ## Providers
 
-| Provider | Streaming command | Browser terminal |
-| --- | --- | --- |
-| `docker` | `docker exec` line stream | PTY via `docker exec -it`, proxied on the websocket above |
-| `e2b` | `commands.run({ onStdout, onStderr })` | E2B PTY proxied on the same websocket. `npm install e2b` |
-| `daytona` | SDK `executeCommand`, lines delivered when the command returns | No provider PTY. The websocket closes with an explanation. `npm install @daytonaio/sdk` |
+| Provider | Reconnect | Streaming command | Browser terminal |
+| --- | --- | --- | --- |
+| `docker` | container id | `docker exec` line stream | PTY via `docker exec -it` |
+| `e2b` | `Sandbox.connect` | `commands.run({ onStdout, onStderr })` | E2B PTY. `npm install e2b` |
+| `daytona` | `Daytona.get` | session `executeSessionCommand` + live `getSessionCommandLogs` | `process.createPty`. `npm install @daytonaio/sdk` |
+| `blaxel` | named sandbox `get` | `process.exec` + `streamLogs` | hosted `/terminal/ws`. `npm install @blaxel/core` |
+| `isorun` | run id | `POST /exec/stream` SSE | `GET /terminal?token=…` WebSocket |
+| `tensorlake` | `Sandbox.connect` | `startProcess` + `followOutput` | `createPty`. `npm install @tensorlakeai/tensorlake` |
+| `modal` | `sandboxes.fromId` | `exec` stdout/stderr iterables | `exec(..., { pty: true })` piped locally. `npm install modal` |
+| `vercel` | `Sandbox.get({ name })` | detached `runCommand` + `logs()` | bash + `writeStdin` proxied locally. `npm install @vercel/sandbox` |
+| `cloudflare` | sandbox id on your **bridge** Worker | `POST /v1/sandbox/:id/exec` SSE | `GET /v1/sandbox/:id/pty` WebSocket |
+| `namespace` | `devboxes.get(name)` | `exec` + `onStdout` / `onStderr` | `terminal.open()`. `npm install @namespacelabs/sdk` |
 
-Modal is not included. It has no TypeScript sandbox SDK to vendor.
+Cloudflare is not a hosted shared API. Deploy Cloudflare’s sandbox bridge and put that Worker URL + key in config. Namespace terminals do not persist for later reattach — each panel open starts a new PTY.
 
 ## Config
 
@@ -71,4 +78,4 @@ Modal is not included. It has no TypeScript sandbox SDK to vendor.
 
 Replace the `@blaxel/core` import with `boxrouter` and call `createRouter` once at startup. Keep `cliSandbox.ts` (clone, Claude/Codex, commit, push, pull request). `execInSandbox` already uses `process.exec`, `streamLogs`, `wait`, and `kill`. The panel builds the terminal URL from `process.url` plus `/terminal/ws` and copies `settings.headers`. Pass the same sandbox `name` you stored as `sdk_agent_id`.
 
-Docker and E2B attach a PTY on that websocket. Daytona has no PTY, so the socket closes with an explanation. Modal has no TypeScript sandbox client, so it is not a driver in this package.
+Each builtin driver attaches a PTY (or a local proxy of the vendor PTY) on that websocket. Pick a backend with `createIfNotExists({ name, backend: "modal" })` when you want one vendor instead of round-robin.

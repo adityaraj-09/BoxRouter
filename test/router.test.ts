@@ -5,6 +5,18 @@ import path from "node:path";
 import test from "node:test";
 import { WebSocket } from "ws";
 import { SandboxInstance } from "../src/blaxel.js";
+import {
+  blaxelDriver,
+  cloudflareDriver,
+  daytonaDriver,
+  isorunDriver,
+  modalDriver,
+  namespaceDriver,
+  readCloudflareSse,
+  readSse,
+  tensorlakeDriver,
+  vercelDriver,
+} from "../src/index.js";
 import { memoryDriver, scriptedStart } from "../src/providers/memory.js";
 import { Router } from "../src/router.js";
 import { JsonStore } from "../src/store.js";
@@ -151,4 +163,33 @@ test("destroy records local price and a monthly cap blocks the next create", asy
   assert.ok(Math.abs(costs.provider_usd - 0.083) < 1e-6);
   assert.ok(Math.abs(costs.customer_usd - 0.166) < 1e-6);
   await assert.rejects(() => SandboxInstance.createIfNotExists({ name: "next" }, box));
+});
+
+test("three-column drivers advertise a PTY and parse Isorun SSE live", async () => {
+  assert.equal(daytonaDriver.terminal, true);
+  assert.equal(blaxelDriver.terminal, true);
+  assert.equal(isorunDriver.terminal, true);
+  assert.equal(tensorlakeDriver.terminal, true);
+  assert.equal(modalDriver.terminal, true);
+  assert.equal(vercelDriver.terminal, true);
+  assert.equal(cloudflareDriver.terminal, true);
+  assert.equal(namespaceDriver.terminal, true);
+  const lines: string[] = [];
+  const result = await readSse(
+    new Response('data: {"type":"stdout","data":"hello\\n"}\ndata: {"type":"exit","code":0}\n', {
+      headers: { "Content-Type": "text/event-stream" },
+    }),
+    { onStdout: (line) => lines.push(line) },
+  );
+  assert.deepEqual(lines, ["hello"]);
+  assert.equal(result.exitCode, 0);
+  const cfLines: string[] = [];
+  const cf = await readCloudflareSse(
+    new Response(`event: stdout\ndata: ${Buffer.from("world\n").toString("base64")}\nevent: exit\ndata: {"exit_code":0}\n`, {
+      headers: { "Content-Type": "text/event-stream" },
+    }),
+    { onStdout: (line) => cfLines.push(line) },
+  );
+  assert.deepEqual(cfLines, ["world"]);
+  assert.equal(cf.exitCode, 0);
 });

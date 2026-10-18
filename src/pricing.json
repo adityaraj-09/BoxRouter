@@ -38,6 +38,24 @@
       "pricing_url": null,
       "notes": "Free locally. Remote cluster costs depend on cloud provider."
     },
+    "blaxel": {
+      "vcpu_per_hour_usd": 0.0,
+      "ram_gib_per_hour_usd": 0.0,
+      "storage_gib_per_month_usd": 0.0,
+      "per_execution_usd": 0.0,
+      "free_tier": null,
+      "pricing_url": "https://blaxel.ai/pricing",
+      "notes": "Estimated. Check Blaxel docs for current rates."
+    },
+    "isorun": {
+      "vcpu_per_hour_usd": 0.0,
+      "ram_gib_per_hour_usd": 0.0,
+      "storage_gib_per_month_usd": 0.0,
+      "per_execution_usd": 0.0,
+      "free_tier": null,
+      "pricing_url": "https://isorun.ai",
+      "notes": "Estimated. Check Isorun docs for current rates."
+    },
     "e2b": {
       "vcpu_per_hour_usd": 0.083,
       "ram_gib_per_hour_usd": 0.0,
@@ -73,6 +91,33 @@
       "free_tier": null,
       "pricing_url": "https://tensorlake.ai",
       "notes": "Estimated. Check Tensorlake docs for current rates."
+    },
+    "vercel": {
+      "vcpu_per_hour_usd": 0.0,
+      "ram_gib_per_hour_usd": 0.0,
+      "storage_gib_per_month_usd": 0.0,
+      "per_execution_usd": 0.0,
+      "free_tier": null,
+      "pricing_url": "https://vercel.com/docs/sandbox",
+      "notes": "Estimated. Check Vercel Sandbox pricing for current rates."
+    },
+    "cloudflare": {
+      "vcpu_per_hour_usd": 0.0,
+      "ram_gib_per_hour_usd": 0.0,
+      "storage_gib_per_month_usd": 0.0,
+      "per_execution_usd": 0.0,
+      "free_tier": null,
+      "pricing_url": "https://developers.cloudflare.com/sandbox/",
+      "notes": "Runs through your deployed sandbox bridge Worker. Cloudflare usage applies."
+    },
+    "namespace": {
+      "vcpu_per_hour_usd": 0.0,
+      "ram_gib_per_hour_usd": 0.0,
+      "storage_gib_per_month_usd": 0.0,
+      "per_execution_usd": 0.0,
+      "free_tier": null,
+      "pricing_url": "https://namespace.so/pricing",
+      "notes": "Estimated. Check Namespace Devbox pricing for current rates."
     }
   }
 }

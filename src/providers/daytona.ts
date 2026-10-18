@@ -1,14 +1,39 @@
-import type { ProviderDriver, ProviderKey, ProviderSession, TerminalSocket } from "../types.js";
+import { LineBuffer } from "../lines.js";
+import { cancellable } from "./ws-proxy.js";
+import type { ExecHandlers, ExecResult, ProviderDriver, ProviderKey, ProviderSession, TerminalSocket } from "../types.js";
 
-/**
- * Daytona can run a command, but its public API does not hand the browser a
- * PTY websocket. Commands are executed through the TypeScript SDK when it is
- * installed, and the terminal socket reports that a PTY is unavailable.
- */
 interface DaytonaSandbox {
   id: string;
   process: {
-    executeCommand(command: string, cwd?: string, env?: Record<string, string>, timeout?: number): Promise<{ exitCode: number; result?: string; artifacts?: { stdout?: string } }>;
+    executeCommand(command: string, cwd?: string, env?: Record<string, string>, timeout?: number): Promise<{
+      exitCode: number;
+      result?: string;
+      artifacts?: { stdout?: string };
+    }>;
+    createSession?(sessionId: string): Promise<void>;
+    executeSessionCommand?(
+      sessionId: string,
+      req: { command: string; runAsync?: boolean },
+      timeout?: number,
+    ): Promise<{ cmdId?: string; exitCode?: number; stdout?: string; stderr?: string; output?: string }>;
+    getSessionCommandLogs?(
+      sessionId: string,
+      commandId: string,
+      onStdout?: (chunk: string) => void,
+      onStderr?: (chunk: string) => void,
+    ): Promise<{ stdout?: string; stderr?: string; output?: string }>;
+    getSessionCommand?(sessionId: string, commandId: string): Promise<{ exitCode?: number }>;
+    createPty?(opts: {
+      id?: string;
+      cwd?: string;
+      cols?: number;
+      rows?: number;
+      onData?: (data: Uint8Array) => void;
+    }): Promise<{
+      sendInput(data: string | Uint8Array): Promise<void>;
+      waitForConnection?(): Promise<void>;
+      disconnect?(): Promise<void>;
+    }>;
   };
   fs: {
     listFiles(path: string): Promise<Array<{ name: string; path?: string; isDir: boolean; size?: number }>>;
@@ -40,7 +65,7 @@ function client(key: ProviderKey, Daytona: DaytonaModule["Daytona"]) {
 
 export const daytonaDriver: ProviderDriver = {
   name: "daytona",
-  terminal: false,
+  terminal: true,
   async create(key, request) {
     if (!key.credentials.DAYTONA_API_KEY) throw new Error("DAYTONA_API_KEY missing on this key");
     const { Daytona } = await loadDaytona();
@@ -63,26 +88,7 @@ function daytonaSession(sandbox: DaytonaSandbox): ProviderSession {
     provider: "daytona",
     resourceId: sandbox.id,
     exec(command, handlers) {
-      const promise = (async () => {
-        const response = await sandbox.process.executeCommand(
-          command,
-          handlers.cwd,
-          handlers.env,
-          handlers.timeoutMs ? Math.ceil(handlers.timeoutMs / 1000) : undefined,
-        );
-        const stdout = response.artifacts?.stdout || response.result || "";
-        const lines = stdout.split("\n").filter(Boolean);
-        for (const line of lines) handlers.onStdout?.(line);
-        return { exitCode: response.exitCode ?? 0, stdout, stderr: "" };
-      })();
-      const result = promise as typeof promise & { cancel: () => Promise<void> };
-      result.cancel = async () => {
-        throw new Error("Daytona command cancel is not supported");
-      };
-      handlers.signal?.addEventListener("abort", () => {
-        void result.cancel();
-      }, { once: true });
-      return result;
+      return streamDaytona(sandbox, command, handlers);
     },
     async listDir(dir) {
       const entries = await sandbox.fs.listFiles(dir);
@@ -95,11 +101,85 @@ function daytonaSession(sandbox: DaytonaSandbox): ProviderSession {
       }
       return { directories, files };
     },
-    async attachTerminal(_socket: TerminalSocket) {
-      throw new Error("Daytona does not expose a browser PTY websocket");
+    async attachTerminal(socket, size) {
+      if (!sandbox.process.createPty) throw new Error("Daytona SDK is missing process.createPty");
+      const handle = await sandbox.process.createPty({
+        id: `boxrouter-${Date.now()}`,
+        cwd: size.cwd,
+        cols: size.cols,
+        rows: size.rows,
+        onData: (data) => socket.send(Buffer.from(data)),
+      });
+      await handle.waitForConnection?.();
+      socket.onMessage((data) => {
+        void handle.sendInput(data);
+      });
+      socket.onClose(() => {
+        void handle.disconnect?.();
+      });
     },
     async destroy() {
       await sandbox.delete();
     },
   };
+}
+
+function streamDaytona(sandbox: DaytonaSandbox, command: string, handlers: ExecHandlers) {
+  const cancel = async () => undefined;
+  const work = (async (): Promise<ExecResult> => {
+    const sessioned = sandbox.process.createSession && sandbox.process.executeSessionCommand && sandbox.process.getSessionCommandLogs;
+    if (!sessioned) return batchExec(sandbox, command, handlers);
+    const sessionId = `boxrouter-${Date.now()}`;
+    await sandbox.process.createSession!(sessionId);
+    const wrapped = handlers.cwd ? `cd ${shellQuote(handlers.cwd)} && ${command}` : command;
+    const started = await sandbox.process.executeSessionCommand!(
+      sessionId,
+      { command: withEnvPrefix(wrapped, handlers.env), runAsync: true },
+      handlers.timeoutMs ? Math.ceil(handlers.timeoutMs / 1000) : undefined,
+    );
+    if (!started.cmdId) return batchExec(sandbox, command, handlers);
+    const stdout = new LineBuffer();
+    const stderr = new LineBuffer();
+    let out = "";
+    let err = "";
+    await sandbox.process.getSessionCommandLogs!(
+      sessionId,
+      started.cmdId,
+      (chunk) => {
+        out += chunk;
+        for (const line of stdout.push(chunk)) handlers.onStdout?.(line);
+      },
+      (chunk) => {
+        err += chunk;
+        for (const line of stderr.push(chunk)) handlers.onStderr?.(line);
+      },
+    );
+    for (const line of stdout.flush()) handlers.onStdout?.(line);
+    for (const line of stderr.flush()) handlers.onStderr?.(line);
+    const finished = await sandbox.process.getSessionCommand?.(sessionId, started.cmdId);
+    return { exitCode: finished?.exitCode ?? started.exitCode ?? 0, stdout: out, stderr: err };
+  })();
+  return cancellable(work, cancel, handlers.signal);
+}
+
+async function batchExec(sandbox: DaytonaSandbox, command: string, handlers: ExecHandlers): Promise<ExecResult> {
+  const response = await sandbox.process.executeCommand(
+    command,
+    handlers.cwd,
+    handlers.env,
+    handlers.timeoutMs ? Math.ceil(handlers.timeoutMs / 1000) : undefined,
+  );
+  const stdout = response.artifacts?.stdout || response.result || "";
+  for (const line of stdout.split("\n").filter(Boolean)) handlers.onStdout?.(line);
+  return { exitCode: response.exitCode ?? 0, stdout, stderr: "" };
+}
+
+function withEnvPrefix(command: string, env?: Record<string, string>): string {
+  if (!env || !Object.keys(env).length) return command;
+  const assigns = Object.entries(env).map(([name, value]) => `${name}=${shellQuote(value)}`).join(" ");
+  return `${assigns} ${command}`;
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
 }

@@ -27,6 +27,65 @@
       },
       "organization_id": "optional-org-id",
       "limits": { "concurrent_sandboxes": 5, "creates_per_day": 50 }
+    },
+    {
+      "id": "blaxel-a",
+      "provider": "blaxel",
+      "credentials": {
+        "BL_API_KEY": "bl_...",
+        "BL_WORKSPACE": ""
+      },
+      "limits": { "concurrent_sandboxes": 10, "creates_per_day": 100 }
+    },
+    {
+      "id": "isorun-a",
+      "provider": "isorun",
+      "credentials": {
+        "ISORUN_API_KEY": "isorun_live_...",
+        "ISORUN_API_URL": "https://run-us.isorun.ai"
+      },
+      "limits": { "concurrent_sandboxes": 10, "creates_per_day": 200 }
+    },
+    {
+      "id": "tensorlake-a",
+      "provider": "tensorlake",
+      "credentials": { "TENSORLAKE_API_KEY": "tl_..." },
+      "limits": { "concurrent_sandboxes": 5, "creates_per_day": 50 }
+    },
+    {
+      "id": "modal-a",
+      "provider": "modal",
+      "credentials": {
+        "MODAL_TOKEN_ID": "ak-...",
+        "MODAL_TOKEN_SECRET": "as-...",
+        "MODAL_APP": "boxrouter"
+      },
+      "limits": { "concurrent_sandboxes": 5, "creates_per_day": 50 }
+    },
+    {
+      "id": "vercel-a",
+      "provider": "vercel",
+      "credentials": {
+        "VERCEL_TOKEN": "...",
+        "VERCEL_TEAM_ID": "team_...",
+        "VERCEL_PROJECT_ID": "prj_..."
+      },
+      "limits": { "concurrent_sandboxes": 5, "creates_per_day": 50 }
+    },
+    {
+      "id": "cloudflare-a",
+      "provider": "cloudflare",
+      "credentials": {
+        "CLOUDFLARE_SANDBOX_URL": "https://your-sandbox-bridge.workers.dev",
+        "CLOUDFLARE_SANDBOX_API_KEY": "bridge_..."
+      },
+      "limits": { "concurrent_sandboxes": 5, "creates_per_day": 50 }
+    },
+    {
+      "id": "namespace-a",
+      "provider": "namespace",
+      "credentials": { "NSC_TOKEN": "nsct_..." },
+      "limits": { "concurrent_sandboxes": 5, "creates_per_day": 50 }
     }
   ]
 }

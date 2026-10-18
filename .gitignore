@@ -4,5 +4,6 @@ __pycache__/
 node_modules/
 dist/
 usage.json
+boxrouter.json
 .pytest_cache/
 *.tmp
