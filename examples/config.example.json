@@ -1,4 +1,8 @@
 {
+  "organization": {
+    "name": "default",
+    "markup": 1.0
+  },
   "keys": [
     {
       "id": "e2b-a",
