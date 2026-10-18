@@ -219,7 +219,8 @@ class ProcessAPI {
 
   async get(name: string): Promise<{ status: string }> {
     const bucket = this.running.get(name);
-    return { status: bucket?.result ? "completed" : "running" };
+    if (!bucket) return { status: "unknown" };
+    return { status: bucket.result ? "completed" : "running" };
   }
 
   private require(name: string): Running {

@@ -32,9 +32,17 @@ interface E2BSandbox {
   kill(): Promise<void>;
 }
 
+interface E2BCreateOpts {
+  apiKey: string;
+  timeoutMs?: number;
+  envs?: Record<string, string>;
+  metadata?: Record<string, string>;
+}
+
 type E2BModule = {
   Sandbox: {
-    create(opts: { apiKey: string; timeoutMs?: number }): Promise<E2BSandbox>;
+    create(opts: E2BCreateOpts): Promise<E2BSandbox>;
+    create(template: string, opts: E2BCreateOpts): Promise<E2BSandbox>;
     connect(id: string, opts: { apiKey: string }): Promise<E2BSandbox>;
   };
 };
@@ -58,10 +66,13 @@ export const e2bDriver: ProviderDriver = {
   terminal: true,
   async create(key, request) {
     const { Sandbox } = await loadE2B();
-    const sandbox = await Sandbox.create({ apiKey: apiKey(key), timeoutMs: 60 * 60 * 1000 });
-    if (request.env && Object.keys(request.env).length) {
-      await sandbox.commands.run("true", { envs: request.env });
-    }
+    const opts: E2BCreateOpts = {
+      apiKey: apiKey(key),
+      timeoutMs: 60 * 60 * 1000,
+      envs: request.env,
+      metadata: { name: request.name },
+    };
+    const sandbox = request.image ? await Sandbox.create(request.image, opts) : await Sandbox.create(opts);
     return e2bSession(sandbox);
   },
   async resume(key, resourceId) {

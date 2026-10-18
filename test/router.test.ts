@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -61,6 +61,8 @@ test("streams complete lines and supports abort", async () => {
   stream.close();
   assert.deepEqual(lines, ["one", "two"]);
   assert.equal(result.exitCode, 0);
+  assert.equal((await sandbox.process.get("cli")).status, "completed");
+  assert.equal((await sandbox.process.get("missing")).status, "unknown");
   assert.match(sandbox.process.url, /^http:\/\/127\.0\.0\.1:\d+\/s\/job$/);
   const steerUrl = `${sandbox.process.url.replace(/^http/, "ws")}/terminal/ws?cols=40&rows=12`;
   assert.equal(sandbox.getTerminalTarget().url.startsWith(steerUrl.split("?")[0] ?? ""), true);
@@ -93,6 +95,41 @@ test("terminal websocket speaks to the provider PTY", async () => {
     });
   });
   assert.match(received, /memory-pty/);
+});
+
+test("an empty provider id is replaced by a real create", async () => {
+  const creates = { n: 0 };
+  const box = await router([key("a")], countingDriver(creates));
+  const file = (box as unknown as { store: { file: string } }).store.file;
+  await writeFile(
+    file,
+    JSON.stringify({
+      version: 1,
+      cursor: 0,
+      keys: {
+        a: { creates: [], active: ["stuck"], invalid: false, blocked_until: null, blocked_reason: null, spend: [] },
+      },
+      names: {
+        stuck: {
+          name: "stuck",
+          keyId: "a",
+          provider: "memory",
+          provider_resource_id: "",
+          cpu: 1,
+          memoryMb: 1024,
+          createdAt: "2026-10-18T12:00:00.000Z",
+        },
+      },
+    }),
+  );
+  await SandboxInstance.createIfNotExists({ name: "stuck" }, box);
+  assert.equal(creates.n, 1);
+  const stored = JSON.parse(await readFile(file, "utf8")) as {
+    keys: { a: { active: string[] } };
+    names: { stuck: { provider_resource_id: string } };
+  };
+  assert.deepEqual(stored.keys.a.active, ["stuck"]);
+  assert.ok(stored.names.stuck.provider_resource_id);
 });
 
 test("destroy records local price and a monthly cap blocks the next create", async () => {

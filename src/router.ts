@@ -33,8 +33,8 @@ export class Router {
       if (!key.id || !key.provider) throw new ConfigError("each key needs id and provider");
       if (seen.has(key.id)) throw new ConfigError(`duplicate key id ${key.id}`);
       seen.add(key.id);
-      key.credentials ?? = {};
-      key.limits ?? = {};
+      key.credentials ??= {};
+      key.limits ??= {};
     }
     for (const driver of drivers) this.drivers.set(driver.name, driver);
   }
@@ -116,12 +116,10 @@ export class Router {
       try {
         return await this.attach(existing);
       } catch {
-        await this.store.update((state) => {
-          delete state.names[request.name];
-          const usage = state.keys[existing.keyId];
-          if (usage) usage.active = usage.active.filter((item) => item !== request.name);
-        });
+        await this.rollback(request.name);
       }
+    } else if (existing) {
+      await this.rollback(request.name);
     }
     return this.provision(request, new Set());
   }
