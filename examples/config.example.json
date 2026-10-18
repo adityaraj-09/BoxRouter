@@ -1,0 +1,42 @@
+{
+  "keys": [
+    {
+      "id": "e2b-a",
+      "provider": "e2b",
+      "credentials": {
+        "E2B_API_KEY": "e2b_your_key"
+      },
+      "limits": {
+        "concurrent_sandboxes": 20,
+        "creates_per_day": 200,
+        "creates_per_month": 2000
+      }
+    },
+    {
+      "id": "modal-a",
+      "provider": "modal",
+      "credentials": {
+        "MODAL_TOKEN_ID": "ak-...",
+        "MODAL_TOKEN_SECRET": "as-..."
+      },
+      "limits": {
+        "concurrent_sandboxes": 10,
+        "creates_per_month": 500,
+        "monthly_spend_usd": 30
+      }
+    },
+    {
+      "id": "daytona-a",
+      "provider": "daytona",
+      "credentials": {
+        "DAYTONA_API_KEY": "dtn_...",
+        "DAYTONA_API_URL": "https://app.daytona.io/api"
+      },
+      "organization_id": "optional-org-id",
+      "limits": {
+        "concurrent_sandboxes": 5,
+        "creates_per_day": 50
+      }
+    }
+  ]
+}
