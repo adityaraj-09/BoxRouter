@@ -1,16 +1,18 @@
 # BoxRouter
 
-TypeScript library that replaces a Blaxel sandbox with a round-robin across the provider keys you already have. Import it in the same process. There is no BoxRouter server and no Bespoke package.
+In-process TypeScript router for agent sandboxes. One `SandboxInstance` API, many provider keys. New sandboxes round-robin across the keys you configure. The same name always reconnects to the sandbox that was already created.
+
+BoxRouter runs inside your process. Import it, point it at a JSON config, and drive sandboxes through one `SandboxInstance` API.
 
 ```ts
 import { createRouter, SandboxInstance, settings } from "boxrouter";
 
 const router = await createRouter("boxrouter.json");
 
-const sandbox = await SandboxInstance.createIfNotExists(
-  { name: "steer-room-agent", image: "python:3.12-slim" },
-  router,
-);
+const sandbox = await SandboxInstance.createIfNotExists({
+  name: "room-agent",
+  image: "python:3.12-slim",
+});
 
 await sandbox.process.exec({
   name: "claude",
@@ -18,45 +20,61 @@ await sandbox.process.exec({
   workingDir: "/home/user/repo",
   waitForCompletion: false,
 });
+
 sandbox.process.streamLogs("claude", {
   onStdout: (line) => console.log(line),
   onStderr: (line) => console.error(line),
 });
-const result = await sandbox.process.wait("claude");
 
+const result = await sandbox.process.wait("claude");
 const terminal = sandbox.getTerminalTarget();
-// terminal.headers matches settings.headers (Authorization: Bearer …).
-// terminal.url is ws://127.0.0.1:<port>/s/<name>/terminal/ws?...
+// terminal.url    ws://127.0.0.1:<port>/s/<name>/terminal/ws?...
+// terminal.headers === settings.headers   Authorization: Bearer …
 ```
 
-`createRouter` installs that router as the default, so Steer's calls stay `SandboxInstance.createIfNotExists({ name, image, memory, ttl, lifecycle, region, envs, labels, externalId })`, `SandboxInstance.get(name)`, and `SandboxInstance.delete(name)`.
+`createRouter` installs that router as the process default, so later calls can omit the router argument.
 
-`get(name)` only resumes. The provider id is `provider_resource_id` in `usage.json` under the Steer sandbox name (`Sandbox.connect` on E2B, `docker inspect` on Docker, `Daytona.get` on Daytona). A missing name throws, which is what Steer's panel path already catches.
+## Install
 
-`sandbox.exec(command, { onStdout, onStderr, signal })` runs until the process exits and forwards each complete line. `process.exec` / `streamLogs` / `wait` / `kill` stay in the Blaxel shape Steer already calls, including `waitForCompletion: false`.
+Requires Node.js 20 or newer.
 
-`sandbox.process.url` is `http://127.0.0.1:<port>/s/<name>`. Steer rewrites that to `ws` and appends `/terminal/ws`. `settings.headers` is the bearer token for that socket. `getTerminalTarget()` returns the same `{ url, headers }`.
+```bash
+npm install boxrouter
+```
 
-## Providers
+Provider SDKs are optional peers. Install only the ones whose keys you put in config:
 
-| Provider | Reconnect | Streaming command | Browser terminal |
-| --- | --- | --- | --- |
-| `docker` | container id | `docker exec` line stream | PTY via `docker exec -it` |
-| `e2b` | `Sandbox.connect` | `commands.run({ onStdout, onStderr })` | E2B PTY. `npm install e2b` |
-| `daytona` | `Daytona.get` | session `executeSessionCommand` + live `getSessionCommandLogs` | `process.createPty`. `npm install @daytonaio/sdk` |
-| `blaxel` | named sandbox `get` | `process.exec` + `streamLogs` | hosted `/terminal/ws`. `npm install @blaxel/core` |
-| `isorun` | run id | `POST /exec/stream` SSE | `GET /terminal?token=…` WebSocket |
-| `tensorlake` | `Sandbox.connect` | `startProcess` + `followOutput` | `createPty`. `npm install @tensorlakeai/tensorlake` |
-| `modal` | `sandboxes.fromId` | `exec` stdout/stderr iterables | `exec(..., { pty: true })` piped locally. `npm install modal` |
-| `vercel` | `Sandbox.get({ name })` | detached `runCommand` + `logs()` | bash + `writeStdin` proxied locally. `npm install @vercel/sandbox` |
-| `cloudflare` | sandbox id on your **bridge** Worker | `POST /v1/sandbox/:id/exec` SSE | `GET /v1/sandbox/:id/pty` WebSocket |
-| `namespace` | `devboxes.get(name)` | `exec` + `onStdout` / `onStderr` | `terminal.open()`. `npm install @namespacelabs/sdk` |
+```bash
+npm install e2b @blaxel/core @vercel/sandbox @daytonaio/sdk modal @namespacelabs/sdk @tensorlakeai/tensorlake
+```
 
-Cloudflare is not a hosted shared API. Deploy Cloudflare’s sandbox bridge and put that Worker URL + key in config. Namespace terminals do not persist for later reattach — each panel open starts a new PTY.
+Docker uses the local `docker` CLI. Isorun and Cloudflare talk HTTP and need no extra package.
 
-## Config
+## Routing
 
-`examples/config.example.json`:
+Every sandbox is stored under the `name` you pass to `createIfNotExists`.
+
+| Call | What happens |
+| --- | --- |
+| New name | Next eligible key is chosen, a sandbox is created, and the provider resource id is saved. |
+| Same name again | That sandbox is resumed. Nothing new is created. |
+| `SandboxInstance.get(name)` | Resume only. An unknown name throws. |
+| `SandboxInstance.delete(name)` | The provider sandbox is destroyed and a local cost estimate is recorded. |
+| `backend: "e2b"` | Rotation stays inside keys whose `provider` is `e2b`. |
+
+Selection walks `keys` from a saved cursor and skips a key that is invalid, blocked, or over a limit. After a successful pick the cursor advances, so the next new name lands on the following key.
+
+Failover:
+
+- **401 / 403 / invalid API key.** The key is marked invalid and the next key is tried.
+- **Quota, rate limit, or billing.** The key is blocked until the end of the UTC day, then the next key is tried.
+- **Any other create error.** The attempt is rolled back and the error is thrown.
+
+State is a JSON file next to the config (`usage.json` when the config is `boxrouter.json`). It stores names, resource ids, the cursor, and spend. Credentials are not written there.
+
+## Configuration
+
+Copy `examples/config.example.json` to `boxrouter.json` and keep that file out of git.
 
 ```json
 {
@@ -66,16 +84,129 @@ Cloudflare is not a hosted shared API. Deploy Cloudflare’s sandbox bridge and 
       "id": "e2b-a",
       "provider": "e2b",
       "credentials": { "E2B_API_KEY": "e2b_..." },
-      "limits": { "concurrent_sandboxes": 20, "creates_per_day": 200, "spend_usd_per_month": 30 }
+      "limits": {
+        "concurrent_sandboxes": 20,
+        "creates_per_day": 200,
+        "creates_per_month": 2000,
+        "spend_usd_per_month": 30
+      }
+    },
+    {
+      "id": "blaxel-a",
+      "provider": "blaxel",
+      "credentials": {
+        "BL_API_KEY": "bl_...",
+        "BL_WORKSPACE": "your-workspace"
+      },
+      "limits": { "concurrent_sandboxes": 10, "creates_per_day": 100 }
     }
   ]
 }
 ```
 
-`router.pricing("e2b")`, `router.estimate(...)`, `router.organization()`, and `router.costs()` are local function calls. Rates live in `src/pricing.json`. Destroying a sandbox writes the estimate into `usage.json`. A key over `spend_usd_per_month` is skipped until the next UTC month.
+`organization.markup` multiplies the provider estimate into a customer figure. `1` means they match.
 
-## Swap inside Steer
+| Limit | Effect |
+| --- | --- |
+| `concurrent_sandboxes` | Skip the key while that many names are still active. |
+| `creates_per_day` | Skip until the next UTC day. |
+| `creates_per_month` | Skip until the next UTC month. |
+| `spend_usd_per_month` | Skip until the next UTC month. `monthly_spend_usd` is the same cap. |
 
-Replace the `@blaxel/core` import with `boxrouter` and call `createRouter` once at startup. Keep `cliSandbox.ts` (clone, Claude/Codex, commit, push, pull request). `execInSandbox` already uses `process.exec`, `streamLogs`, `wait`, and `kill`. The panel builds the terminal URL from `process.url` plus `/terminal/ws` and copies `settings.headers`. Pass the same sandbox `name` you stored as `sdk_agent_id`.
+Only keys that can actually create should sit in `keys`. A placeholder credential is selected like any other key and fails at create time.
 
-Each builtin driver attaches a PTY (or a local proxy of the vendor PTY) on that websocket. Pick a backend with `createIfNotExists({ name, backend: "modal" })` when you want one vendor instead of round-robin.
+## Providers
+
+Each driver implements the same three calls: reconnect by the stored id, stream command output as it is produced, and attach a browser terminal. The terminal BoxRouter returns is always a local WebSocket plus `settings.headers`. Vendor PTY sessions are proxied onto that socket.
+
+| `provider` | Package | Credentials | Notes |
+| --- | --- | --- | --- |
+| `docker` | local `docker` | none | `docker exec` stream and an interactive `docker exec -it` PTY. |
+| `e2b` | `e2b` | `E2B_API_KEY` | `Sandbox.connect`, `commands.run` callbacks, E2B PTY. |
+| `daytona` | `@daytonaio/sdk` | `DAYTONA_API_KEY`, optional `DAYTONA_API_URL` | Session logs stream while the command runs. PTY via `createPty`. |
+| `blaxel` | `@blaxel/core` | `BL_API_KEY`, `BL_WORKSPACE`, optional `BL_REGION` | Named sandbox. Logs via `streamLogs`. Region defaults to `us-pdx-1`. The API key needs a role on that workspace. |
+| `isorun` | none | `ISORUN_API_KEY`, optional `ISORUN_API_URL` | SSE `POST /exec/stream`. Terminal is `GET /terminal?token=…`. Default API host is `https://run-us.isorun.ai`. |
+| `tensorlake` | `@tensorlakeai/tensorlake` | `TENSORLAKE_API_KEY` | `Sandbox.connect`, `followOutput`, `createPty`. |
+| `modal` | `modal` | `MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET`, optional `MODAL_APP` | `fromId` reconnect. Exec streams stdout and stderr. Terminal is a PTY exec piped locally. Default app name is `boxrouter`. |
+| `vercel` | `@vercel/sandbox` | `VERCEL_TOKEN`, `VERCEL_TEAM_ID`, `VERCEL_PROJECT_ID` | `Sandbox.get({ name })`. Detached `runCommand` logs. Terminal is a bash session with stdin. |
+| `cloudflare` | none | `CLOUDFLARE_SANDBOX_URL`, `CLOUDFLARE_SANDBOX_API_KEY` | Your deployed [sandbox bridge](https://developers.cloudflare.com/sandbox/bridge/) Worker. Exec is SSE. Terminal is `GET /v1/sandbox/:id/pty`. |
+| `namespace` | `@namespacelabs/sdk` | `NSC_TOKEN` or `NAMESPACE_TOKEN`, optional `NSC_DEVBOX_ENDPOINT` | `devboxes.get`. Exec callbacks. `terminal.open()` starts a new PTY on each attach; Namespace does not keep that session for reattach. |
+
+Pin one vendor when you do not want rotation:
+
+```ts
+await SandboxInstance.createIfNotExists({
+  name: "room-agent",
+  backend: "blaxel",
+});
+```
+
+## API
+
+`SandboxInstance` is the call surface: create, exec, stream logs, list files, and open a terminal.
+
+| Method | Behavior |
+| --- | --- |
+| `createIfNotExists(opts)` | Open or resume by `name`. Accepts `image`, `memory`, `ttl`, `lifecycle`, `region`, `envs`, `labels`, `externalId`, `backend`. `ttl` and `lifecycle` are stored for type compatibility and are not enforced. |
+| `get(name)` | Resume. Throws when the name is unknown. |
+| `delete(name)` / `sandbox.delete()` | Destroy and bill the local estimate. |
+| `list({ labels })` | Names recorded locally, filtered by labels stored at create. |
+| `process.exec({ name, command, workingDir, env, timeout, waitForCompletion })` | Start a named command. `timeout` is seconds. `waitForCompletion: false` returns after start. |
+| `process.streamLogs(name, { onStdout, onStderr })` | Replay buffered lines, then live lines. `close()` drops the subscriber. |
+| `process.wait(name, { maxWait, signal })` | Resolve with `{ exitCode, stdout, stderr, status }`. |
+| `process.kill(name)` / `process.stop(name)` | Cancel the command. |
+| `process.get(name)` | `{ status: "running" \| "completed" \| "unknown" }`. |
+| `fs.ls(dir)` | `{ subdirectories, files }`. |
+| `sandbox.exec(command, { onStdout, onStderr, cwd, env, signal, timeoutMs })` | Run to completion and emit complete lines. |
+| `getTerminalTarget()` | `{ url, headers }` for the local PTY websocket. |
+| `process.url` | `http://127.0.0.1:<port>/s/<name>`. |
+| `unarchive()` | No-op. |
+
+`settings.headers` is the bearer token for that websocket. Open `process.url` with the scheme rewritten to `ws` and `/terminal/ws` appended, and send `settings.headers` on the upgrade.
+
+Router helpers:
+
+```ts
+await router.status();
+await router.organization();
+await router.costs();
+router.pricing("e2b");
+router.estimate("e2b", elapsedSeconds, cpu, memoryMb);
+```
+
+Rates live in `src/pricing.json` and are estimates. Destroy writes `provider_usd` and `customer_usd` (estimate × markup) into `usage.json`.
+
+## Startup
+
+Call `createRouter` once when the process starts. Later `SandboxInstance` calls use that router.
+
+```ts
+import { createRouter } from "boxrouter";
+
+await createRouter(process.env.BOXROUTER_CONFIG ?? "boxrouter.json");
+```
+
+Keep the sandbox `name` you want to resume. `get(name)` throws when that name was never created.
+
+## Develop
+
+```bash
+npm install
+npm test
+npm run build
+```
+
+`npm test` covers rotation, reconnect, line streaming, the terminal websocket, and spend caps with an in-memory driver.
+
+To exercise real keys, put them in `boxrouter.json` and run:
+
+```bash
+npx tsx scripts/live-smoke.mts e2b blaxel vercel
+npx tsx scripts/live-roundrobin.mts
+```
+
+The smoke script creates a sandbox, streams a command, reconnects by name, lists `/`, and deletes it. The round-robin script opens one sandbox per configured key in `e2b`, `blaxel`, and `vercel` and checks that successive names land on different providers.
+
+## License
+
+Apache-2.0
