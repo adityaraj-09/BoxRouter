@@ -5,7 +5,7 @@ In-process TypeScript router for agent sandboxes. One `SandboxInstance` API, man
 BoxRouter runs inside your process. Import it, point it at a JSON config, and drive sandboxes through one `SandboxInstance` API.
 
 ```ts
-import { createRouter, SandboxInstance, settings } from "boxrouter";
+import { createRouter, SandboxInstance, settings } from "sandbox-router";
 
 const router = await createRouter("boxrouter.json");
 
@@ -39,7 +39,7 @@ const terminal = sandbox.getTerminalTarget();
 Requires Node.js 20 or newer.
 
 ```bash
-npm install boxrouter
+npm install sandbox-router
 ```
 
 Provider SDKs are optional peers. Install only the ones whose keys you put in config:
@@ -183,7 +183,7 @@ Rates live in `src/pricing.json` and are estimates. Destroy writes `provider_usd
 Call `createRouter` once when the process starts. Later `SandboxInstance` calls use that router.
 
 ```ts
-import { createRouter } from "boxrouter";
+import { createRouter } from "sandbox-router";
 
 await createRouter(process.env.BOXROUTER_CONFIG ?? "boxrouter.json");
 ```

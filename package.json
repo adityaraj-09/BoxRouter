@@ -1,5 +1,5 @@
 {
-  "name": "boxrouter",
+  "name": "sandbox-router",
   "version": "0.2.0",
   "description": "In-process sandbox router with a Blaxel-compatible API",
   "type": "module",
