@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import type { ChildProcess } from "node:child_process";
 import { LineBuffer } from "../lines.js";
 import type { CreateRequest, ExecHandlers, ExecResult, ProviderDriver, ProviderKey, ProviderSession, TerminalSocket } from "../types.js";
@@ -27,12 +28,19 @@ function quote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
+/** `a/b` and `a-b` sanitize to the same string, so a hash suffix keeps names collision-free. */
+function containerName(name: string): string {
+  const hash = createHash("sha1").update(name).digest("hex").slice(0, 8);
+  const base = name.replace(/[^a-z0-9_.-]/gi, "-").toLowerCase().replace(/^[^a-z0-9]+/, "").slice(0, 50) || "boxrouter";
+  return `${base}-${hash}`;
+}
+
 export const dockerDriver: ProviderDriver = {
   name: "docker",
   terminal: true,
   async create(key, request) {
     const image = request.image || "python:3.12-slim";
-    const name = request.name.replace(/[^a-z0-9-]/gi, "-").toLowerCase().slice(0, 60);
+    const name = containerName(request.name);
     const memory = request.memoryMb ? ["--memory", `${request.memoryMb}m`] : [];
     const created = await run(["run", "-d", "--name", name, ...memory, image, "sleep", "infinity"]);
     if (created.code !== 0) {
@@ -63,18 +71,18 @@ function dockerSession(_key: ProviderKey, resourceId: string): ProviderSession {
         "-w",
         "/",
         resourceId,
-        "bash",
+        "sh",
         "-lc",
-        `cd ${quote(dir)} && find . -mindepth 1 -maxdepth 1 -printf '%y %s %P\\n'`,
+        `cd ${quote(dir)} && ls -1ap`,
       ]);
       const directories = [];
       const files = [];
       for (const line of listed.stdout.split("\n")) {
-        if (!line.trim()) continue;
-        const [kind, size, ...nameParts] = line.split(" ");
-        const name = nameParts.join(" ");
-        const entry = { name, path: `${dir.replace(/\/$/, "")}/${name}`, sizeBytes: Number(size) || 0 };
-        if (kind === "d") directories.push(entry);
+        if (!line.trim() || line === "../") continue;
+        const isDir = line.endsWith("/");
+        const name = isDir ? line.slice(0, -1) : line;
+        const entry = { name, path: `${dir.replace(/\/$/, "")}/${name}` };
+        if (isDir) directories.push(entry);
         else files.push(entry);
       }
       return { directories, files };
@@ -111,7 +119,7 @@ function streamDocker(resourceId: string, command: string, handlers: ExecHandler
   for (const [name, value] of Object.entries(handlers.env ?? {})) {
     args.push("-e", `${name}=${value}`);
   }
-  args.push(resourceId, "bash", "-lc", command);
+  args.push(resourceId, "sh", "-c", command);
   const child = spawn("docker", args, { stdio: ["pipe", "pipe", "pipe"] });
   return bindChild(child, handlers);
 }

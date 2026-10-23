@@ -1,4 +1,5 @@
 import { LineBuffer } from "../lines.js";
+import { shellQuote } from "./shell.js";
 import { cancellable, pipeWebSocket } from "./ws-proxy.js";
 import type { ExecHandlers, ExecResult, ProviderDriver, ProviderKey, ProviderSession } from "../types.js";
 
@@ -109,6 +110,7 @@ export async function readCloudflareSse(response: Response, handlers: ExecHandle
   let out = "";
   let err = "";
   let exitCode = 0;
+  let sawExit = false;
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let rest = "";
@@ -129,13 +131,17 @@ export async function readCloudflareSse(response: Response, handlers: ExecHandle
       applyCloudflareEvent(event, data, handlers, stdout, stderr, (chunk, stream) => {
         if (stream === "stdout") out += chunk;
         else if (stream === "stderr") err += chunk;
-        else exitCode = Number(chunk) || 0;
+        else {
+          exitCode = Number(chunk) || 0;
+          sawExit = true;
+        }
       });
       event = "";
     }
   }
   for (const line of stdout.flush()) handlers.onStdout?.(line);
   for (const line of stderr.flush()) handlers.onStderr?.(line);
+  if (!sawExit) throw new Error("Cloudflare exec stream ended without an exit frame");
   return { exitCode, stdout: out, stderr: err };
 }
 
@@ -177,8 +183,4 @@ function decodeChunk(data: string): string {
   } catch {
     return data;
   }
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
 }

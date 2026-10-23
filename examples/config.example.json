@@ -86,6 +86,18 @@
       "provider": "namespace",
       "credentials": { "NSC_TOKEN": "nsct_..." },
       "limits": { "concurrent_sandboxes": 5, "creates_per_day": 50 }
+    },
+    {
+      "id": "boat-a",
+      "provider": "boat",
+      "credentials": { "BOAT_API_KEY": "boat_..." },
+      "limits": { "concurrent_sandboxes": 5, "creates_per_day": 50 }
+    },
+    {
+      "id": "freestyle-a",
+      "provider": "freestyle",
+      "credentials": { "FREESTYLE_API_KEY": "fs_..." },
+      "limits": { "concurrent_sandboxes": 5, "creates_per_day": 50 }
     }
   ]
 }

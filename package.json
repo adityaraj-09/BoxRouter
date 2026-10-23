@@ -13,31 +13,58 @@
   },
   "files": ["dist", "src/pricing.json", "README.md"],
   "scripts": {
-    "build": "tsc -p tsconfig.json && cp src/pricing.json dist/pricing.json",
-    "test": "tsx --test test/*.test.ts"
+    "build": "tsc -p tsconfig.json && node scripts/copy-pricing.mjs",
+    "test": "tsx --test test/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build && npm test"
   },
   "engines": {
     "node": ">=20"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adityaraj-09/BoxRouter.git"
+  },
+  "bugs": {
+    "url": "https://github.com/adityaraj-09/BoxRouter/issues"
+  },
+  "homepage": "https://github.com/adityaraj-09/BoxRouter#readme",
+  "keywords": [
+    "sandbox",
+    "router",
+    "blaxel",
+    "e2b",
+    "daytona",
+    "vercel",
+    "modal",
+    "cloudflare",
+    "boat",
+    "freestyle",
+    "agents"
+  ],
   "dependencies": {
     "ws": "^8.18.3"
   },
   "peerDependencies": {
     "@blaxel/core": "^0.2.0",
+    "@boatdev/sdk": "^1.11.0",
     "@daytonaio/sdk": "^0.100.0",
     "@namespacelabs/sdk": "^0.1.0",
     "@tensorlakeai/tensorlake": "^0.1.0",
     "@vercel/sandbox": "^1.0.0",
     "e2b": "^2.0.0",
+    "freestyle": "^0.2.20",
     "modal": "^0.5.0"
   },
   "peerDependenciesMeta": {
     "@blaxel/core": { "optional": true },
+    "@boatdev/sdk": { "optional": true },
     "@daytonaio/sdk": { "optional": true },
     "@namespacelabs/sdk": { "optional": true },
     "@tensorlakeai/tensorlake": { "optional": true },
     "@vercel/sandbox": { "optional": true },
     "e2b": { "optional": true },
+    "freestyle": { "optional": true },
     "modal": { "optional": true }
   },
   "devDependencies": {

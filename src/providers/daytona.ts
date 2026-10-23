@@ -1,4 +1,5 @@
 import { LineBuffer } from "../lines.js";
+import { shellQuote, withEnvPrefix } from "./shell.js";
 import { cancellable } from "./ws-proxy.js";
 import type { ExecHandlers, ExecResult, ProviderDriver, ProviderKey, ProviderSession, TerminalSocket } from "../types.js";
 
@@ -172,14 +173,4 @@ async function batchExec(sandbox: DaytonaSandbox, command: string, handlers: Exe
   const stdout = response.artifacts?.stdout || response.result || "";
   for (const line of stdout.split("\n").filter(Boolean)) handlers.onStdout?.(line);
   return { exitCode: response.exitCode ?? 0, stdout, stderr: "" };
-}
-
-function withEnvPrefix(command: string, env?: Record<string, string>): string {
-  if (!env || !Object.keys(env).length) return command;
-  const assigns = Object.entries(env).map(([name, value]) => `${name}=${shellQuote(value)}`).join(" ");
-  return `${assigns} ${command}`;
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
 }
