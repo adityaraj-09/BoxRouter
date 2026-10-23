@@ -45,7 +45,7 @@ npm install boxrouter
 Provider SDKs are optional peers. Install only the ones whose keys you put in config:
 
 ```bash
-npm install e2b @blaxel/core @vercel/sandbox @daytonaio/sdk modal @namespacelabs/sdk @tensorlakeai/tensorlake
+npm install e2b @blaxel/core @vercel/sandbox @daytonaio/sdk modal @namespacelabs/sdk @tensorlakeai/tensorlake @boatdev/sdk freestyle
 ```
 
 Docker uses the local `docker` CLI. Isorun and Cloudflare talk HTTP and need no extra package.
@@ -117,7 +117,7 @@ Only keys that can actually create should sit in `keys`. A placeholder credentia
 
 ## Providers
 
-Each driver implements the same three calls: reconnect by the stored id, stream command output as it is produced, and attach a browser terminal. The terminal BoxRouter returns is always a local WebSocket plus `settings.headers`. Vendor PTY sessions are proxied onto that socket.
+Each driver implements the same three calls: reconnect by the stored id, stream command output as it is produced, and attach a browser terminal. The terminal BoxRouter returns is always a local WebSocket plus `settings.headers`. Vendor PTY sessions are proxied onto that socket. Boat is the exception: its HTTP API exposes SSH and a desktop, not an attachable PTY, so it reports `terminal: false`.
 
 | `provider` | Package | Credentials | Notes |
 | --- | --- | --- | --- |
@@ -131,6 +131,8 @@ Each driver implements the same three calls: reconnect by the stored id, stream 
 | `vercel` | `@vercel/sandbox` | `VERCEL_TOKEN`, `VERCEL_TEAM_ID`, `VERCEL_PROJECT_ID` | `Sandbox.get({ name })`. Detached `runCommand` logs. Terminal is a bash session with stdin. |
 | `cloudflare` | none | `CLOUDFLARE_SANDBOX_URL`, `CLOUDFLARE_SANDBOX_API_KEY` | Your deployed [sandbox bridge](https://developers.cloudflare.com/sandbox/bridge/) Worker. Exec is SSE. Terminal is `GET /v1/sandbox/:id/pty`. |
 | `namespace` | `@namespacelabs/sdk` | `NSC_TOKEN` or `NAMESPACE_TOKEN`, optional `NSC_DEVBOX_ENDPOINT` | `devboxes.get`. Exec callbacks. `terminal.open()` starts a new PTY on each attach; Namespace does not keep that session for reattach. |
+| `boat` | `@boatdev/sdk` | `BOAT_API_KEY`, optional `BOAT_API_URL` | `create`, `get`, `resume`, `streamCommand`. `image` is passed as `from`, so it must be a saved Boat snapshot name; Docker image names are not supported. Size comes from `cpu`/`memory`: small (2 vCPU/4 GiB), default (4/8), large (8/16), xlarge (16/32). Commands cap at 600 s. Boat's HTTP API has no attachable PTY, so `terminal` is `false`. |
+| `freestyle` | `freestyle` | `FREESTYLE_API_KEY`, optional `FREESTYLE_API_URL` | `vms.create` with a public firewall, `vms.get` + `start` on resume, `vm.exec`, `vm.pty.open`. `image` is treated as a Freestyle snapshot id and `cpu`/`memory` grow the VM (Freestyle cannot shrink). Create-time `env` is not supported; pass `env` per exec. Exec has no live callbacks, so output is emitted once the command finishes and caps at 300 s. The PTY closes when the terminal socket closes. |
 
 Pin one vendor when you do not want rotation:
 

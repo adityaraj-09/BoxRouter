@@ -1,8 +1,10 @@
 import { blaxelDriver } from "./providers/blaxel.js";
+import { boatDriver } from "./providers/boat.js";
 import { cloudflareDriver } from "./providers/cloudflare.js";
 import { daytonaDriver } from "./providers/daytona.js";
 import { dockerDriver } from "./providers/docker.js";
 import { e2bDriver } from "./providers/e2b.js";
+import { freestyleDriver } from "./providers/freestyle.js";
 import { isorunDriver } from "./providers/isorun.js";
 import { modalDriver } from "./providers/modal.js";
 import { namespaceDriver } from "./providers/namespace.js";
@@ -20,10 +22,12 @@ export type { BlaxelCreateOptions, BlaxelExecOptions } from "./blaxel.js";
 export type { TerminalTarget, ExecHandlers, ExecResult } from "./types.js";
 export {
   blaxelDriver,
+  boatDriver,
   cloudflareDriver,
   daytonaDriver,
   dockerDriver,
   e2bDriver,
+  freestyleDriver,
   isorunDriver,
   modalDriver,
   namespaceDriver,
@@ -44,6 +48,8 @@ const builtin: ProviderDriver[] = [
   vercelDriver,
   cloudflareDriver,
   namespaceDriver,
+  boatDriver,
+  freestyleDriver,
 ];
 
 /** Load keys and start routing. Pass extra drivers (usually a test double) in front of the builtins. */

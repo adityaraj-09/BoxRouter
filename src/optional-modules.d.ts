@@ -29,3 +29,13 @@ declare module "@namespacelabs/sdk/devbox" {
 declare module "@namespacelabs/sdk/auth" {
   export function fromBearerToken(token: string): unknown;
 }
+
+declare module "@boatdev/sdk" {
+  export const BoatApi: unknown;
+  export const Configuration: unknown;
+  export const streamCommand: unknown;
+}
+
+declare module "freestyle" {
+  export const Freestyle: unknown;
+}
