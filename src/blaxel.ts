@@ -50,7 +50,11 @@ interface Running {
   subscribers: Array<{ onStdout?: (line: string) => void; onStderr?: (line: string) => void }>;
   task: Promise<ExecResult> & { cancel: () => Promise<void> };
   result?: ExecResult;
+  error?: unknown;
 }
+
+const LINE_CAP = 2000;
+const COMPLETION_GRACE_MS = 60_000;
 
 /**
  * Drop-in shape for the subset of `@blaxel/core` SandboxInstance that Steer uses.
@@ -125,8 +129,7 @@ export class SandboxInstance {
   private static async bind(live: LiveSandbox, router: Router): Promise<SandboxInstance> {
     registerSession(live.name, live.session, live.terminal);
     const instance = new SandboxInstance(live, router);
-    const target = await terminalTarget(live.name);
-    instance.terminalTargetValue = target;
+    if (live.terminal) instance.terminalTargetValue = await terminalTarget(live.name);
     instance.process.url = await sandboxProcessUrl(live.name);
     instance.process.headers = { ...settings.headers };
     return instance;
@@ -158,11 +161,29 @@ class ProcessAPI {
       onStderr: (line) => publish(bucket, "stderr", line),
     });
     bucket.task = task;
-    void task.then((result) => {
-      bucket.result = result;
-    });
+    task
+      .then((result) => {
+        bucket.result = result;
+        this.finish(bucket);
+      })
+      .catch((error) => {
+        bucket.error = error;
+        this.finish(bucket);
+      });
     this.running.set(opts.name, bucket);
     if (opts.waitForCompletion !== false) await task;
+  }
+
+  /** Store the terminal state, then reclaim the bucket later by default. */
+  private finish(bucket: Running): void {
+    const timer = setTimeout(() => {
+      if (bucket.subscribers.length === 0) {
+        for (const [name, candidate] of this.running) {
+          if (candidate === bucket) this.running.delete(name);
+        }
+      }
+    }, COMPLETION_GRACE_MS);
+    timer.unref?.();
   }
 
   streamLogs(
@@ -220,6 +241,7 @@ class ProcessAPI {
   async get(name: string): Promise<{ status: string }> {
     const bucket = this.running.get(name);
     if (!bucket) return { status: "unknown" };
+    if (bucket.error) return { status: "failed" };
     return { status: bucket.result ? "completed" : "running" };
   }
 
@@ -243,10 +265,16 @@ class FileAPI {
 }
 
 function publish(bucket: Running, stream: "stdout" | "stderr", line: string): void {
-  bucket.lines[stream].push(line);
+  const lines = bucket.lines[stream];
+  lines.push(line);
+  if (lines.length > LINE_CAP) lines.splice(0, lines.length - LINE_CAP);
   for (const subscriber of bucket.subscribers) {
-    if (stream === "stdout") subscriber.onStdout?.(line);
-    else subscriber.onStderr?.(line);
+    try {
+      if (stream === "stdout") subscriber.onStdout?.(line);
+      else subscriber.onStderr?.(line);
+    } catch {
+      // A throwing subscriber must not kill the provider read loop.
+    }
   }
 }
 

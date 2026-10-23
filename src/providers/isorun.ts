@@ -1,4 +1,5 @@
 import { LineBuffer } from "../lines.js";
+import { shellQuote, withEnvPrefix } from "./shell.js";
 import { cancellable, pipeWebSocket } from "./ws-proxy.js";
 import type { ExecHandlers, ExecResult, ProviderDriver, ProviderKey, ProviderSession } from "../types.js";
 
@@ -72,9 +73,9 @@ function isorunSession(key: ProviderKey, resourceId: string): ProviderSession {
     async attachTerminal(socket, size) {
       const { apiKey, apiUrl } = creds(key);
       const ws = apiUrl.replace(/^http/, "ws");
-      const params = new URLSearchParams({ token: apiKey, cols: String(size.cols), rows: String(size.rows) });
+      const params = new URLSearchParams({ cols: String(size.cols), rows: String(size.rows) });
       if (size.cwd) params.set("cwd", size.cwd);
-      await pipeWebSocket(`${ws}/v1/runs/${encodeURIComponent(resourceId)}/terminal?${params}`, {}, socket);
+      await pipeWebSocket(`${ws}/v1/runs/${encodeURIComponent(resourceId)}/terminal?${params}`, { Authorization: `Bearer ${apiKey}` }, socket);
     },
     async destroy() {
       await isorunFetch(key, `/v1/runs/${encodeURIComponent(resourceId)}`, { method: "DELETE" });
@@ -106,6 +107,7 @@ export async function readSse(response: Response, handlers: ExecHandlers): Promi
   let out = "";
   let err = "";
   let exitCode = 0;
+  let sawExit = false;
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let rest = "";
@@ -118,16 +120,23 @@ export async function readSse(response: Response, handlers: ExecHandlers): Promi
     for (const line of lines) applyFrame(line, handlers, stdout, stderr, (chunk, stream) => {
       if (stream === "stdout") out += chunk;
       else if (stream === "stderr") err += chunk;
-      else exitCode = Number(chunk) || 0;
+      else {
+        exitCode = Number(chunk) || 0;
+        sawExit = true;
+      }
     });
   }
   if (rest) applyFrame(rest, handlers, stdout, stderr, (chunk, stream) => {
     if (stream === "stdout") out += chunk;
     else if (stream === "stderr") err += chunk;
-    else exitCode = Number(chunk) || 0;
+    else {
+      exitCode = Number(chunk) || 0;
+      sawExit = true;
+    }
   });
   for (const line of stdout.flush()) handlers.onStdout?.(line);
   for (const line of stderr.flush()) handlers.onStderr?.(line);
+  if (!sawExit) throw new Error("Isorun exec stream ended without an exit frame");
   return { exitCode, stdout: out, stderr: err };
 }
 
@@ -155,14 +164,4 @@ function applyFrame(
   } else if (frame.type === "exit") {
     record(String(frame.code ?? frame.data ?? 0), "exit");
   }
-}
-
-function withEnvPrefix(command: string, env?: Record<string, string>): string {
-  if (!env || !Object.keys(env).length) return command;
-  const assigns = Object.entries(env).map(([name, value]) => `${name}=${shellQuote(value)}`).join(" ");
-  return `${assigns} ${command}`;
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
 }

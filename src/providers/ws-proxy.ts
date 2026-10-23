@@ -36,19 +36,39 @@ export function cancellable<T>(
   return result;
 }
 
+type LiveEnv = { signature: string; done?: Promise<unknown> };
+const liveEnv: LiveEnv[] = [];
+
+/**
+ * Scope SDK credentials onto process.env without cross-tenant bleed.
+ * Calls with a different credential set wait for the currently scoped one to finish;
+ * calls with identical values may run concurrently since they write the same values.
+ */
 export async function withEnv<T>(vars: Record<string, string | undefined>, fn: () => Promise<T>): Promise<T> {
-  const previous: Record<string, string | undefined> = {};
-  for (const [name, value] of Object.entries(vars)) {
-    previous[name] = process.env[name];
-    if (value === undefined) delete process.env[name];
-    else process.env[name] = value;
-  }
-  try {
-    return await fn();
-  } finally {
-    for (const [name, value] of Object.entries(previous)) {
+  const signature = JSON.stringify(vars);
+  const others = liveEnv.filter((entry) => entry.signature !== signature).map((entry) => entry.done!);
+  const entry: LiveEnv = { signature };
+  liveEnv.push(entry);
+  const run = (async () => {
+    if (others.length) await Promise.all(others);
+    const previous: Record<string, string | undefined> = {};
+    for (const [name, value] of Object.entries(vars)) {
+      previous[name] = process.env[name];
       if (value === undefined) delete process.env[name];
       else process.env[name] = value;
     }
-  }
+    try {
+      return await fn();
+    } finally {
+      for (const [name, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
+  })();
+  entry.done = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
 }
